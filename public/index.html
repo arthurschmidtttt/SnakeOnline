@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snake Online</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #222;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      position: relative;
+      overflow: hidden;
+    }
+    #gameCanvas {
+      background: #111;
+      display: block;
+      margin: auto;
+      border: 2px solid #444;
+    }
+    #minimap {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      border: 1px solid #fff;
+      background: #000;
+    }
+    #scoreboard {
+      position: absolute;
+      bottom: 10px;
+      right: 220px;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border: 1px solid #fff;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <canvas id="minimap" width="200" height="150"></canvas>
+  <div id="scoreboard"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const minimap = document.getElementById('minimap');
+    const minimapCtx = minimap.getContext('2d');
+    const scoreboard = document.getElementById('scoreboard');
+
+    const GRID_SIZE = 20;
+    const WORLD_WIDTH = 800;
+    const WORLD_HEIGHT = 600;
+    const UPDATE_INTERVAL = 200;
+
+    const viewport = {
+      x: 0,
+      y: 0,
+      width: canvas.width,
+      height: canvas.height
+    };
+
+    let player = {
+      x: 100,
+      y: 100,
+      direction: { x: 1, y: 0 },
+      score: 0,
+      name: "",
+      color: ""
+    };
+    let players = {};
+    let collectibles = [];
+
+    let playerName = prompt("Digite seu nome:", "Player");
+    if (!playerName) playerName = "Player";
+    player.name = playerName;
+
+    socket.emit('newPlayer', { name: player.name, x: player.x, y: player.y });
+
+    function updateCamera() {
+      viewport.x = player.x - canvas.width / 2;
+      viewport.y = player.y - canvas.height / 2;
+      if (viewport.x < 0) viewport.x = 0;
+      if (viewport.y < 0) viewport.y = 0;
+      if (viewport.x > WORLD_WIDTH - viewport.width) viewport.x = WORLD_WIDTH - viewport.width;
+      if (viewport.y > WORLD_HEIGHT - viewport.height) viewport.y = WORLD_HEIGHT - viewport.height;
+    }
+
+    function updatePlayer() {
+      player.x += player.direction.x * GRID_SIZE;
+      player.y += player.direction.y * GRID_SIZE;
+      if (player.x >= WORLD_WIDTH) player.x = 0;
+      if (player.x < 0) player.x = WORLD_WIDTH - GRID_SIZE;
+      if (player.y >= WORLD_HEIGHT) player.y = 0;
+      if (player.y < 0) player.y = WORLD_HEIGHT - GRID_SIZE;
+      updateCamera();
+      socket.emit('playerMovement', player);
+    }
+    setInterval(updatePlayer, UPDATE_INTERVAL);
+
+    document.addEventListener('keydown', (e) => {
+      switch (e.key) {
+        case 'ArrowUp':
+          if (player.direction.y !== 1) player.direction = { x: 0, y: -1 };
+          break;
+        case 'ArrowDown':
+          if (player.direction.y !== -1) player.direction = { x: 0, y: 1 };
+          break;
+        case 'ArrowLeft':
+          if (player.direction.x !== 1) player.direction = { x: -1, y: 0 };
+          break;
+        case 'ArrowRight':
+          if (player.direction.x !== -1) player.direction = { x: 1, y: 0 };
+          break;
+      }
+    });
+
+    function drawGame() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#222";
+      ctx.fillRect(-viewport.x, -viewport.y, WORLD_WIDTH, WORLD_HEIGHT);
+
+      collectibles.forEach(col => {
+        ctx.beginPath();
+        ctx.arc(col.x + GRID_SIZE / 2 - viewport.x, col.y + GRID_SIZE / 2 - viewport.y, 5, 0, 2 * Math.PI);
+        ctx.fillStyle = "yellow";
+        ctx.fill();
+      });
+
+      for (const id in players) {
+        const p = players[id];
+        ctx.fillStyle = p.color || '#3498db';
+        ctx.fillRect(p.x - viewport.x, p.y - viewport.y, GRID_SIZE, GRID_SIZE);
+        ctx.fillStyle = "#fff";
+        ctx.font = "14px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(p.name, p.x - viewport.x + GRID_SIZE / 2, p.y - viewport.y - 5);
+      }
+
+      requestAnimationFrame(drawGame);
+    }
+
+    function drawMinimap() {
+      minimapCtx.clearRect(0, 0, minimap.width, minimap.height);
+      minimapCtx.fillStyle = "#000";
+      minimapCtx.fillRect(0, 0, minimap.width, minimap.height);
+      const scaleX = minimap.width / WORLD_WIDTH;
+      const scaleY = minimap.height / WORLD_HEIGHT;
+
+      collectibles.forEach(col => {
+        minimapCtx.fillStyle = "yellow";
+        minimapCtx.fillRect(col.x * scaleX, col.y * scaleY, 4, 4);
+      });
+
+      for (const id in players) {
+        const p = players[id];
+        minimapCtx.fillStyle = p.color || '#3498db';
+        minimapCtx.fillRect(p.x * scaleX, p.y * scaleY, 4, 4);
+      }
+      minimapCtx.strokeStyle = "#fff";
+      minimapCtx.lineWidth = 1;
+      minimapCtx.strokeRect(viewport.x * scaleX, viewport.y * scaleY, viewport.width * scaleX, viewport.height * scaleY);
+    }
+    setInterval(drawMinimap, 100);
+
+    function updateScoreboard() {
+      let html = "<h4>Placar</h4><ul>";
+      for (const id in players) {
+        const p = players[id];
+        html += `<li style="color: ${p.color || '#fff'}">${p.name}: ${p.score}</li>`;
+      }
+      html += "</ul>";
+      scoreboard.innerHTML = html;
+    }
+    setInterval(updateScoreboard, 500);
+
+    socket.on('currentPlayers', (serverPlayers) => {
+      players = serverPlayers;
+    });
+
+    socket.on('newPlayer', (newPlayer) => {
+      players[newPlayer.id] = newPlayer;
+    });
+
+    socket.on('playerMoved', (movedPlayer) => {
+      players[movedPlayer.id] = movedPlayer;
+    });
+
+    socket.on('playerDisconnected', (id) => {
+      delete players[id];
+    });
+
+    socket.on('collectiblesUpdate', (serverCollectibles) => {
+      collectibles = serverCollectibles;
+    });
+
+    requestAnimationFrame(drawGame);
+  </script>
+</body>
+</html>
